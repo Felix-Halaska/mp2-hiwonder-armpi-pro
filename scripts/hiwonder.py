@@ -12,6 +12,8 @@ from servo_bus_controller import ServoBusController
 import utils as ut
 import sympy as sp
 import math
+from math import atan2, sqrt, sin, cos
+import yaml
 
 # Robot base constants
 WHEEL_RADIUS = 0.047  # meters
@@ -23,7 +25,9 @@ class HiwonderRobot:
         """Initialize motor controllers, servo bus, and default robot states."""
         self.board = BoardController()
         self.servo_bus = ServoBusController()
+        self.l1, self.l2, self.l3, self.l4, self.l5 = 0.155, 0.099, 0.095, 0.055, 0.105
 
+        self.jacobian = self.make_jacobian()
         self.joint_values = [0, 0, 90, -30, 0, 0]  # degrees
         self.home_position = [0, 0, 90, -30, 0, 0]  # degrees
         self.joint_limits = [
@@ -32,6 +36,8 @@ class HiwonderRobot:
         ]
         self.joint_control_delay = 0.2 # secs
         self.speed_control_delay = 0.2
+
+        self.EE = [0,0,0,0,0,0]
 
         self.move_to_home_position()
 
@@ -187,6 +193,75 @@ class HiwonderRobot:
         
         # set new joint angles
         self.set_joint_values(new_thetalist, radians=False)
+
+    def read_yaml(self):
+        with open('EE_positions.yml', 'r') as f:
+            self.EE_positions = yaml.load(f, Loader=yaml.SafeLoader)
+
+
+    def analytical_ik(self, EE, EE_positions, thetalist: list, radians=False):
+        
+        for position in EE_positions.values():
+            self.EE = list(position)
+        
+        
+            x = EE[0]
+            y = EE[1]
+            z = EE[2]
+            rotx = EE[0]
+            roty = EE[1]
+            rotz = EE[2]
+
+            # Find wrist position
+            R_EE = np.array(ut.euler_to_rotm((rotx, roty, rotz)), dtype=float)
+            z_zero = np.transpose(np.array([[0, 0, 1]]))
+            p_wrist = np.array([[x], [y], [z]]) - ((self.l4 + self.l5) * (R_EE @ z_zero))
+
+            x_wrist = p_wrist[0]
+            y_wrist = p_wrist[1]
+            z_wrist = p_wrist[2]
+
+            # Calculate theta 1
+            t_1 = atan2(y_wrist, x_wrist) + math.pi
+
+            # Define parallel plane
+            s = z_wrist - self.l1
+            r = sqrt(x_wrist**2 + y_wrist**2)
+
+            # Find geometric relationships
+            L = sqrt(s**2 + r**2)
+            alpha = atan2(r, s)
+            beta = np.arccos(
+                np.clip((self.l2**2 + self.l3**2 - L**2) / (2 * self.l2 * self.l3), -1, 1)
+            )
+
+            # Solve for two solutions for theta 2 and theta 3
+            t_3 = math.pi - beta
+            phi = atan2((self.l3 * sin(-t_3)), (self.l2 + (self.l3 * cos(-t_3))))
+            t_2 = alpha - phi
+
+            R_1 = np.array([[cos(t_1),0,sin(t_1)],[sin(t_1),0,-cos(t_1)],[0,1,0]])
+            R_1_5 = np.array([[0,-1,0],[1,0,0],[0,0,1]])
+            R_2 = np.array([[cos(t_2),sin(t_2),0],[sin(t_2),-cos(t_2),0],[0,0,-1]])
+            R_3 = np.array([[cos(t_3),sin(t_3),0],[sin(t_3),-cos(t_3),0],[0,0,-1]])
+            R_0_3 = R_1 @ R_1_5 @ R_2 @ R_3
+
+            R_3_5 = np.transpose(R_0_3) @ R_EE
+
+            t_4 = atan2(R_3_5[1,2],R_3_5[0,2])
+            t_5 = atan2(-R_3_5[2,0],-R_3_5[2,1])
+
+            #Assign theta values to theta list
+            # Assign theta values to theta list
+            thetalist[0] = t_1
+            thetalist[1] = t_2
+            thetalist[2] = t_3
+            thetalist[3] = t_4
+            thetalist[4] = t_5
+
+            self.set_joint_values(thetalist, radians=True)
+
+            time.sleep(5)
 
 
     def set_joint_value(self, joint_id: int, theta: float, duration=250, radians=False):

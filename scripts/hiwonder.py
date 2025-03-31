@@ -14,6 +14,8 @@ import utils as ut
 import sympy as sp
 from sympy import evalf
 import math
+from math import atan2, sqrt, sin, cos
+import yaml
 
 # Robot base constants
 WHEEL_RADIUS = 0.047  # meters
@@ -28,6 +30,7 @@ class HiwonderRobot:
         self.servo_bus = ServoBusController()
         self.l1, self.l2, self.l3, self.l4, self.l5 = 0.155, 0.099, 0.095, 0.055, 0.105
 
+        self.jacobian = self.make_jacobian()
         self.joint_values = [0, 0, 90, -30, 0, 0]  # degrees
         self.home_position = [0, 0, 90, -30, 0, 0]  # degrees
         self.joint_limits = [
@@ -40,6 +43,8 @@ class HiwonderRobot:
         ]
         self.joint_control_delay = 0.2  # secs
         self.speed_control_delay = 0.2
+
+        self.EE = [0, 0, 0, 0, 0, 0]
 
         self.move_to_home_position()
 
